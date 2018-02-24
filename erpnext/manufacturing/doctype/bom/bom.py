@@ -9,6 +9,8 @@ from erpnext.setup.utils import get_exchange_rate
 from frappe.website.website_generator import WebsiteGenerator
 from erpnext.stock.get_item_details import get_conversion_factor
 
+from six import string_types
+
 from operator import itemgetter
 
 form_grid_templates = {
@@ -109,7 +111,7 @@ class BOM(WebsiteGenerator):
 		if not args:
 			args = frappe.form_dict.get('args')
 
-		if isinstance(args, basestring):
+		if isinstance(args, string_types):
 			import json
 			args = json.loads(args)
 
@@ -199,6 +201,14 @@ class BOM(WebsiteGenerator):
 
 		if not from_child_bom:
 			frappe.msgprint(_("Cost Updated"))
+
+	def update_parent_cost(self):
+		if self.total_cost:
+			cost = self.total_cost / self.quantity
+
+			frappe.db.sql("""update `tabBOM Item` set rate=%s, amount=stock_qty*%s
+				where bom_no = %s and docstatus < 2 and parenttype='BOM'""",
+				(cost, cost, self.name))
 
 	def get_bom_unitcost(self, bom_no):
 		bom = frappe.db.sql("""select name, base_total_cost/quantity as unit_cost from `tabBOM`
@@ -544,7 +554,7 @@ def get_bom_items_as_dict(bom, company, qty=1, fetch_exploded=1, fetch_scrap_ite
 				group by item_code, stock_uom
 				order by idx"""
 
-	if fetch_exploded:
+	if cint(fetch_exploded):
 		query = query.format(table="BOM Explosion Item",
 			where_conditions="",
 			select_columns = ", bom_item.source_warehouse, (Select idx from `tabBOM Item` where item_code = bom_item.item_code and parent = %(parent)s ) as idx")
@@ -586,13 +596,20 @@ def validate_bom_no(item, bom_no):
 	if bom.docstatus != 1:
 		if not getattr(frappe.flags, "in_test", False):
 			frappe.throw(_("BOM {0} must be submitted").format(bom_no))
-	if item and not (bom.item.lower() == item.lower() or \
-		bom.item.lower() == cstr(frappe.db.get_value("Item", item, "variant_of")).lower()):
-		frappe.throw(_("BOM {0} does not belong to Item {1}").format(bom_no, item))
+	if item:
+		rm_item_exists = False
+		for d in bom.items:
+			if (d.item_code.lower() == item.lower()):
+				rm_item_exists = True
+		if bom.item.lower() == item.lower() or \
+			bom.item.lower() == cstr(frappe.db.get_value("Item", item, "variant_of")).lower():
+ 				rm_item_exists = True
+		if not rm_item_exists:
+			frappe.throw(_("BOM {0} does not belong to Item {1}").format(bom_no, item))
 
 @frappe.whitelist()
 def get_children(doctype, parent=None, is_root=False, **filters):
-	if not parent:
+	if not parent or parent=="BOM":
 		frappe.msgprint(_('Please select a BOM'))
 		return
 

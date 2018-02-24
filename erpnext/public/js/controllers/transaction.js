@@ -204,6 +204,7 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 				filters: {
 					docstatus: 1,
 					inspection_type: inspection_type,
+					reference_name: doc.name,
 					item_code: d.item_code
 				}
 			}
@@ -244,10 +245,11 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 				method: "erpnext.controllers.accounts_controller.get_default_taxes_and_charges",
 				args: {
 					"master_doctype": taxes_and_charges_field.options,
+					"tax_template": me.frm.doc.taxes_and_charges,
 					"company": me.frm.doc.company
 				},
 				callback: function(r) {
-					if(!r.exc) {
+					if(!r.exc && r.message) {
 						frappe.run_serially([
 							() => {
 								// directly set in doc, so as not to call triggers
@@ -457,7 +459,7 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 				}
 
 				var party = me.frm.doc[frappe.model.scrub(party_type)];
-				if(party) {
+				if(party && me.frm.doc.company) {
 					return frappe.call({
 						method: "erpnext.accounts.party.get_party_account",
 						args: {
@@ -517,12 +519,14 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 					args: {
 						"posting_date": me.frm.doc.posting_date,
 						"party_type": me.frm.doc.doctype == "Sales Invoice" ? "Customer" : "Supplier",
+						"bill_date": me.frm.doc.bill_date,
 						"party": me.frm.doc.doctype == "Sales Invoice" ? me.frm.doc.customer : me.frm.doc.supplier,
 						"company": me.frm.doc.company
 					},
 					callback: function(r, rt) {
 						if(r.message) {
-							me.frm.set_value("due_date", r.message);
+							me.frm.doc.due_date = r.message;
+							refresh_field("due_date");
 							frappe.ui.form.trigger(me.frm.doc.doctype, "currency");
 							me.recalculate_terms();
 						}
@@ -537,8 +541,9 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 	due_date: function() {
 		// due_date is to be changed, payment terms template and/or payment schedule must
 		// be removed as due_date is automatically changed based on payment terms
-		if (this.frm.doc.due_date) {
-			if (this.frm.doc.payment_terms_template || this.frm.doc.payment_schedule.length) {
+		if (this.frm.doc.due_date && !this.frm.updating_party_details && !this.frm.doc.is_pos) {
+			if (this.frm.doc.payment_terms_template ||
+				(this.frm.doc.payment_schedule && this.frm.doc.payment_schedule.length)) {
 				var message1 = "";
 				var message2 = "";
 				var final_message = "Please clear the ";
@@ -548,21 +553,22 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 					final_message = final_message + message1;
 				}
 
-				if (this.frm.doc.payment_schedule.length) {
+				if ((this.frm.doc.payment_schedule || []).length) {
 					message2 = "Payment Schedule Table";
 					if (message1.length !== 0) message2 = " and " + message2;
 					final_message = final_message + message2;
 				}
-
 				frappe.msgprint(final_message);
 			}
+		}
+	},
 
-	    }
+	bill_date: function() {
+		this.posting_date();
 	},
 
 	recalculate_terms: function() {
 		const doc = this.frm.doc;
-
 		if (doc.payment_terms_template) {
 			this.payment_terms_template();
 		} else if (doc.payment_schedule) {
@@ -647,6 +653,9 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 				}
 			}).fail(() => this.frm.set_value('shipping_rule', ''));
 		}
+		else {
+			me.calculate_taxes_and_totals();
+		}
 	},
 
 	set_actual_charges_based_on_currency: function() {
@@ -700,7 +709,7 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 		}
 
 		if(!this.in_apply_price_list) {
-			this.apply_price_list();
+			this.apply_price_list(null, true);
 		}
 	},
 
@@ -772,7 +781,8 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 		this.frm.toggle_reqd("plc_conversion_rate",
 			!!(this.frm.doc.price_list_name && this.frm.doc.price_list_currency));
 
-		if(this.frm.doc_currency!==this.frm.doc.currency) {
+		if(this.frm.doc_currency!==this.frm.doc.currency
+			|| this.frm.doc_currency!==this.frm.doc.price_list_currency) {
 			// reset names only when the currency is different
 
 			var company_currency = this.get_company_currency();
@@ -1052,7 +1062,13 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 		if(!price_list_rate_changed) me.calculate_taxes_and_totals();
 	},
 
-	apply_price_list: function(item) {
+	apply_price_list: function(item, reset_plc_conversion) {
+		// We need to reset plc_conversion_rate sometimes because the call to
+		// `erpnext.stock.get_item_details.apply_price_list` is sensitive to its value
+		if (!reset_plc_conversion) {
+			this.frm.set_value("plc_conversion_rate", "");
+		}
+
 		var me = this;
 		var args = this._get_args(item);
 		if (!((args.items && args.items.length) || args.price_list)) {
@@ -1261,12 +1277,14 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 		var me = this;
 		const doc = this.frm.doc;
 		if(doc.payment_terms_template && doc.doctype !== 'Delivery Note') {
+			var posting_date = doc.posting_date || doc.transaction_date;
 			frappe.call({
 				method: "erpnext.controllers.accounts_controller.get_payment_terms",
 				args: {
 					terms_template: doc.payment_terms_template,
-					posting_date: doc.posting_date || doc.transaction_date,
-					grand_total: doc.rounded_total || doc.grand_total
+					posting_date: posting_date,
+					grand_total: doc.rounded_total || doc.grand_total,
+					bill_date: doc.bill_date
 				},
 				callback: function(r) {
 					if(r.message && !r.exc) {
@@ -1284,6 +1302,7 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 				method: "erpnext.controllers.accounts_controller.get_payment_term_details",
 				args: {
 					term: row.payment_term,
+					bill_date: this.frm.doc.bill_date,
 					posting_date: this.frm.doc.posting_date || this.frm.doc.transaction_date,
 					grand_total: this.frm.doc.rounded_total || this.frm.doc.grand_total
 				},

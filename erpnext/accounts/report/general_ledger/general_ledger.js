@@ -1,4 +1,4 @@
-// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2018, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
 frappe.query_reports["General Ledger"] = {
@@ -105,6 +105,12 @@ frappe.query_reports["General Ledger"] = {
 			"fieldname":"group_by_account",
 			"label": __("Group by Account"),
 			"fieldtype": "Check",
+		},
+		{
+			"fieldname": "presentation_currency",
+			"label": __("Currency"),
+			"fieldtype": "Select",
+			"options": erpnext.get_presentation_currency_list()
 		}
 	]
 }

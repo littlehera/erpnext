@@ -5,8 +5,10 @@ from __future__ import unicode_literals
 import frappe
 import frappe.share
 from frappe import _
-from frappe.utils import cstr, now_datetime, cint, flt
+from frappe.utils import cstr, now_datetime, cint, flt, get_time
 from erpnext.controllers.status_updater import StatusUpdater
+
+from six import string_types
 
 class UOMMustBeIntegerError(frappe.ValidationError): pass
 
@@ -26,6 +28,11 @@ class TransactionBase(StatusUpdater):
 			now = now_datetime()
 			self.posting_date = now.strftime('%Y-%m-%d')
 			self.posting_time = now.strftime('%H:%M:%S.%f')
+		elif self.posting_time:
+			try:
+				get_time(self.posting_time)
+			except ValueError:
+				frappe.throw(_('Invalid Posting Time'))
 
 	def add_calendar_event(self, opts, force=False):
 		if cstr(self.contact_by) != cstr(self._prev.contact_by) or \
@@ -134,7 +141,7 @@ def delete_events(ref_type, ref_name):
 		where ref_type=%s and ref_name=%s""", (ref_type, ref_name)), for_reload=True)
 
 def validate_uom_is_integer(doc, uom_field, qty_fields, child_dt=None):
-	if isinstance(qty_fields, basestring):
+	if isinstance(qty_fields, string_types):
 		qty_fields = [qty_fields]
 
 	distinct_uoms = list(set([d.get(uom_field) for d in doc.get_all_children()]))

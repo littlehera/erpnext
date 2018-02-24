@@ -104,8 +104,8 @@ class SalesOrder(SellingController):
 	def validate_delivery_date(self):
 		if self.order_type == 'Sales':
 			if not self.delivery_date:
-				self.delivery_date = max([d.delivery_date for d in self.get("items") if d.delivery_date])
-
+				delivery_date_list = [d.delivery_date for d in self.get("items") if d.delivery_date]
+				self.delivery_date = max(delivery_date_list) if delivery_date_list else None
 			if self.delivery_date:
 				for d in self.get("items"):
 					if not d.delivery_date:
@@ -476,18 +476,10 @@ def make_project(source_name, target_doc=None):
 @frappe.whitelist()
 def make_delivery_note(source_name, target_doc=None):
 	def set_missing_values(source, target):
-		if source.po_no:
-			if target.po_no:
-				target_po_no = target.po_no.split(", ")
-				target_po_no.append(source.po_no)
-				target.po_no = ", ".join(list(set(target_po_no))) if len(target_po_no) > 1 else target_po_no[0]
-			else:
-				target.po_no = source.po_no
-
-		# Since the credit limit check is bypassed at sales order level,
-		# we need to check it at delivery note
-		if cint(frappe.db.get_value("Customer", source.customer, "bypass_credit_limit_check_at_sales_order")):
-			check_credit_limit(source.customer, source.company)
+		so = [d.against_sales_order for d in target.items]
+		if so:
+			po_no_list = frappe.get_all('Sales Order', 'po_no', filters = {'name': ('in', so)})
+			target.po_no = ', '.join(d.po_no for d in po_no_list if d.po_no)
 
 		target.ignore_pricing_rule = 1
 		target.run_method("set_missing_values")
@@ -553,10 +545,6 @@ def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False):
 		target.run_method("set_missing_values")
 		target.run_method("calculate_taxes_and_totals")
 
-		# Since the credit limit check is bypassed at sales order level, we need to check it at sales invoice
-		if cint(frappe.db.get_value("Customer", source.customer, "bypass_credit_limit_check_at_sales_order")):
-			check_credit_limit(source.customer, source.company)
-
 		# set company address
 		target.update(get_company_address(target.company))
 		if target.company_address:
@@ -567,10 +555,12 @@ def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False):
 		target.base_amount = target.amount * flt(source_parent.conversion_rate)
 		target.qty = target.amount / flt(source.rate) if (source.rate and source.billed_amt) else source.qty
 
-		item = frappe.db.get_value("Item", target.item_code, ["item_group", "selling_cost_center"], as_dict=1)
-		target.cost_center = frappe.db.get_value("Project", source_parent.project, "cost_center") \
-			or item.selling_cost_center \
-			or frappe.db.get_value("Item Group", item.item_group, "default_cost_center")
+		if source_parent.project:
+			target.cost_center = frappe.db.get_value("Project", source_parent.project, "cost_center")
+		if not target.cost_center and target.item_code:
+			item = frappe.db.get_value("Item", target.item_code, ["item_group", "selling_cost_center"], as_dict=1)
+			target.cost_center = item.selling_cost_center \
+				or frappe.db.get_value("Item Group", item.item_group, "default_cost_center")
 
 	doclist = get_mapped_doc("Sales Order", source_name, {
 		"Sales Order": {
