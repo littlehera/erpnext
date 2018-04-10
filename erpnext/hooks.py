@@ -218,7 +218,7 @@ doc_events = {
 scheduler_events = {
 	"hourly": [
 		"erpnext.accounts.doctype.subscription.subscription.make_subscription_entry",
-		'erpnext.hr.doctype.daily_work_summary_group.daily_work_summary_group.trigger_emails'
+		'erpnext.hr.doctype.daily_work_summary_group.daily_work_summary_group.trigger_emails',
 	],
 	"daily": [
 		"erpnext.stock.reorder_item.reorder_item",
@@ -236,7 +236,12 @@ scheduler_events = {
 		"erpnext.setup.doctype.company.company.cache_companies_monthly_sales_history",
 		"erpnext.manufacturing.doctype.bom_update_tool.bom_update_tool.update_latest_price_in_all_boms",
 		"erpnext.assets.doctype.asset.asset.update_maintenance_status"
-	]
+	],
+	"cron": {
+		"*/2 * * * *": [
+			"erpnext.utilities.doctype.auto_repeat.auto_repeat.make_auto_repeat_entry"
+		]
+	}
 }
 
 email_brand_image = "assets/erpnext/images/erpnext-logo.jpg"

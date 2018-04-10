@@ -11,3 +11,4 @@ erpnext/docs/current
 *.swp
 *.swo
 *~
+.idea/
